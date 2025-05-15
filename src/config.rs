@@ -19,10 +19,19 @@ impl Default for GrpcProcessor {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct WalletConfig {
     pub mnemonic_seed: String,
     pub mint_urls: Vec<String>,
+}
+
+impl Default for WalletConfig {
+    fn default() -> Self {
+        Self {
+            mnemonic_seed: String::new(),
+            mint_urls: vec!["https://mint.example.com".to_string()],
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -49,15 +58,26 @@ pub struct Settings {
 
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
+        Self::with_work_dir(None)
+    }
+
+    pub fn with_work_dir(work_dir: Option<&str>) -> Result<Self, ConfigError> {
         // Start with default settings
         let mut s = Config::builder()
             // Start with default values
             .add_source(Config::try_from(&Self::default())?)
             // Add in the current environment
             // Prefix can be empty, or set to something like "CDK_GATEWAY"
-            .add_source(Environment::with_prefix("CDK_GATEWAY").separator("__"))
-            // Add in settings from the config file if it exists
-            .add_source(File::with_name("config").required(false));
+            .add_source(Environment::with_prefix("CDK_GATEWAY").separator("__"));
+
+        // If work_dir is provided, look for config file there
+        if let Some(dir) = work_dir {
+            let config_path = std::path::Path::new(dir).join("config.toml");
+            s = s.add_source(File::from(config_path).required(false));
+        } else {
+            // Otherwise look in the current directory
+            s = s.add_source(File::with_name("config").required(false));
+        }
 
         // You can also specify a different config file path with an environment variable
         if let Ok(config_path) = std::env::var("CDK_GATEWAY_CONFIG") {

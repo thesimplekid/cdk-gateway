@@ -10,8 +10,40 @@ use std::sync::Arc;
 const DEFAULT_WORK_DIR: &str = ".cdk-gateway";
 
 fn main() -> anyhow::Result<()> {
-    // Load configuration
-    let settings = Settings::new()?;
+    // Get home directory
+    let home_dir = home::home_dir().unwrap();
+    let work_dir = home_dir.join(DEFAULT_WORK_DIR);
+    
+    // Create work directory if it doesn't exist
+    if !work_dir.exists() {
+        std::fs::create_dir_all(&work_dir)?;
+    }
+    
+    // Create default config file if it doesn't exist
+    let config_path = work_dir.join("config.toml");
+    if !config_path.exists() {
+        println!("Creating default configuration at: {:?}", config_path);
+        std::fs::write(
+            &config_path,
+            r#"# CDK Gateway Configuration
+
+[grpc_processor]
+addr = "127.0.0.1"
+port = 50051
+
+[wallet]
+mnemonic_seed = ""
+mint_urls = ["https://mint.example.com"]
+
+[server]
+listen_addr = "127.0.0.1"
+port = 3000
+"#,
+        )?;
+    }
+    
+    // Load configuration from the work directory
+    let settings = Settings::with_work_dir(Some(work_dir.to_str().unwrap()))?;
     println!("Loaded configuration: {:?}", settings);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -26,6 +58,13 @@ fn main() -> anyhow::Result<()> {
         let grpc_settings = settings.grpc_processor;
         let wallet_settings = settings.wallet;
         let server_settings = settings.server;
+        
+        // Verify that a mnemonic seed is provided
+        if wallet_settings.mnemonic_seed.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Error: No mnemonic seed provided in configuration. Please add a mnemonic_seed to your config.toml file."
+            ));
+        }
 
         // Initialize the payment processor
         let payment_processor = cdk_payment_processor::PaymentProcessorClient::new(
@@ -35,12 +74,16 @@ fn main() -> anyhow::Result<()> {
         )
         .await?;
 
-        let home_dir = home::home_dir().unwrap();
-        let work_dir = home_dir.join(DEFAULT_WORK_DIR);
+        // Make sure the work directory exists
+        if !work_dir.exists() {
+            std::fs::create_dir_all(&work_dir)?;
+        }
 
+        // Parse the mnemonic
         let mnemonic = bip39::Mnemonic::from_str(&wallet_settings.mnemonic_seed)?;
 
-        let redb_path = work_dir.join("cdk-cli.redb");
+        // Set up the database in the work directory
+        let redb_path = work_dir.join("cdk-gateway.redb");
         let localstore = Arc::new(WalletRedbDatabase::new(&redb_path)?);
 
         let mut wallets = vec![];

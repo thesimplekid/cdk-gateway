@@ -19,7 +19,6 @@ port = 50051
 #-----------------------------------------------
 [wallet]
 # Optional: Your BIP39 mnemonic seed phrase
-# If not provided, a new one will be generated
 mnemonic_seed = "example word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
 
 # List of Cashu mint URLs to connect to
