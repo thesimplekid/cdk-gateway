@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use axum::Router;
@@ -104,7 +105,7 @@ pub struct MeltRequest {
     pub method: PaymentMethod,
     pub request: String,
     pub amount: Option<Amount>,
-    pub tokens: Vec<Token>,
+    pub tokens: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,7 +140,10 @@ pub async fn create_cashu_lsp_router(
     gateway: Arc<CdkGateway>,
     mints: Vec<String>,
 ) -> anyhow::Result<Router> {
-    tracing::debug!("Creating CDK Gateway router with {} supported mints", mints.len());
+    tracing::debug!(
+        "Creating CDK Gateway router with {} supported mints",
+        mints.len()
+    );
     let gateway_state = GatwayState {
         inner: gateway,
         mints,
@@ -206,7 +210,13 @@ pub async fn post_melt_request(
         }
     };
 
-    let token_amount: Vec<Amount> = payload.tokens.iter().map(|a| a.value().unwrap()).collect();
+    let tokens: Vec<Token> = payload
+        .tokens
+        .iter()
+        .flat_map(|t| Token::from_str(t))
+        .collect();
+
+    let token_amount: Vec<Amount> = tokens.iter().map(|a| a.value().unwrap()).collect();
     let total_amount = Amount::try_sum(token_amount).unwrap();
 
     if total_amount < amount_to_pay_sat {
@@ -223,7 +233,7 @@ pub async fn post_melt_request(
 
     let mut used_mints = vec![];
 
-    for token in payload.tokens.iter() {
+    for token in tokens.iter() {
         let mint_url = token.mint_url().unwrap();
         let wallet = state
             .inner
@@ -309,7 +319,7 @@ pub async fn post_melt_request(
 
     tracing::info!("Payment successfully processed");
 
-    for token in payload.tokens.iter() {
+    for token in tokens.iter() {
         let wallet = state
             .inner
             .wallets()
@@ -373,7 +383,10 @@ pub async fn post_melt_request(
         change.push(token.to_string());
     }
 
-    tracing::info!("Payment request completed successfully with {} tokens in change", change.len());
+    tracing::info!(
+        "Payment request completed successfully with {} tokens in change",
+        change.len()
+    );
     Ok(Json(MeltResponse {
         payment_proof: proof,
         change,
