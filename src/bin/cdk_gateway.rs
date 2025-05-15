@@ -148,25 +148,42 @@ fn main() -> anyhow::Result<()> {
     // Set up signal handling for graceful shutdown
     let gateway_for_shutdown = gateway.clone();
     let runtime_for_shutdown = runtime.clone();
+    
+    // Create a channel to signal when shutdown is complete
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
 
-    ctrlc::set_handler(move || {
-        tracing::info!("Received shutdown signal, shutting down...");
-        let gateway = gateway_for_shutdown.clone();
-        let runtime = runtime_for_shutdown.clone();
-        
-        // Shutdown the gateway
-        runtime.block_on(async {
-            if let Err(e) = gateway.stop_server().await {
-                tracing::error!("Error during shutdown: {}", e);
-            }
-        });
-    })
-    .expect("Error setting Ctrl-C handler");
+    // Common shutdown function
+    let create_shutdown_handler = |tx: std::sync::mpsc::Sender<()>, gw: CdkGateway, rt: Arc<tokio::runtime::Runtime>| {
+        move || {
+            tracing::info!("Received shutdown signal, shutting down...");
+            let gateway = gw.clone();
+            let runtime = rt.clone();
+            let shutdown_tx = tx.clone();
+            
+            // Shutdown the gateway
+            runtime.block_on(async {
+                if let Err(e) = gateway.stop_server().await {
+                    tracing::error!("Error during shutdown: {}", e);
+                }
+                // Signal that shutdown is complete
+                let _ = shutdown_tx.send(());
+            });
+        }
+    };
+
+    // Set up SIGINT (Ctrl+C) handler
+    let sigint_handler = create_shutdown_handler(
+        shutdown_tx.clone(),
+        gateway_for_shutdown.clone(),
+        runtime_for_shutdown.clone()
+    );
+    ctrlc::set_handler(sigint_handler).expect("Error setting Ctrl-C handler");
 
     tracing::info!("CDK Gateway running. Press Ctrl+C to stop.");
 
-    // Keep the main thread alive
-    std::thread::park();
+    // Wait for shutdown signal
+    let _ = shutdown_rx.recv();
+    tracing::info!("CDK Gateway shutdown complete");
     
     Ok(())
 }
