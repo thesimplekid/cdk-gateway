@@ -1,10 +1,7 @@
 # CDK Gateway
 
-CDK Gateway is a service that bridges Cashu ecash tokens with Lightning Network payments. It allows users to spend their Cashu tokens to pay Lightning invoices through a simple HTTP API.
+CDK Gateway is a service that bridges Cashu ecash tokens with Lightning Network payments. It allows users to spend their Cashu tokens to pay Lightning invoices through a simple HTTP API. The gateway implements HTLC (Hash Time Locked Contract) locking for all tokens. This means that the tokens cannot be spent by the gateway unless it successfully pays the corresponding Lightning invoice. This security measure ensures that user funds are protected during the payment process - if the Lightning payment fails for any reason, the tokens remain locked and are returned to the user.
 
-## What is Cashu?
-
-Cashu is a privacy-focused ecash protocol for Bitcoin. It allows users to hold and transfer value with tokens that provide strong privacy guarantees. To learn more about Cashu, visit [the Cashu website](https://cashu.space).
 
 ## Features
 
@@ -23,7 +20,7 @@ Cashu is a privacy-focused ecash protocol for Bitcoin. It allows users to hold a
 ### Building from Source
 
 ```sh
-git clone https://github.com/yourusername/cdk-gateway.git
+git clone https://github.com/thesimplekid/cdk-gateway.git
 cd cdk-gateway
 cargo build --release
 ```
