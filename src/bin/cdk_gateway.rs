@@ -112,6 +112,26 @@ fn main() -> anyhow::Result<()> {
         let multi_mint_wallet = MultiMintWallet::new(localstore, Arc::new(seed), wallets);
         tracing::info!("Multi-mint wallet initialized");
 
+        // Log the wallet balances at startup
+        tracing::info!("Logging wallet balances at startup");
+        for wallet_key in multi_mint_wallet.get_wallets().await.iter().map(|w| cdk::wallet::types::WalletKey::new(w.mint_url.clone(), w.unit.clone())) {
+            match multi_mint_wallet.get_wallet(&wallet_key).await {
+                Some(wallet) => {
+                    match wallet.total_balance().await {
+                        Ok(balance) => {
+                            tracing::info!("Wallet [{}] unspent balance: {}", wallet_key.mint_url, balance);
+                        },
+                        Err(e) => {
+                            tracing::error!("Failed to get balance for wallet [{}]: {}", wallet_key.mint_url, e);
+                        }
+                    }
+                },
+                None => {
+                    tracing::warn!("Could not find wallet for key: {:?}", wallet_key);
+                }
+            }
+        }
+
         // Start the gateway server with all components
         let gateway = CdkGateway::new(Arc::new(payment_processor), multi_mint_wallet);
 
@@ -128,7 +148,7 @@ fn main() -> anyhow::Result<()> {
 
         // Start the server in a separate task
         tokio::spawn(async move {
-            if let Err(e) = gateway.start_server(socket_addr, wallet_settings.mint_urls.clone()).await {
+            if let Err(e) = gateway.start_server(socket_addr, wallet_settings.mint_urls.clone().iter().flat_map(|s|MintUrl::from_str(s)).collect()).await {
                 tracing::error!("Server error: {}", e);
             }
         });
