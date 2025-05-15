@@ -272,7 +272,7 @@ pub async fn post_melt_request(
     if total_amount < amount_to_pay_sat {
         tracing::error!("Not enough proofs provided");
         return Err(ErrorResponse {
-            code: 400,
+            code: 402,
             message: "Insufficient funds".to_string(),
             details: Some(format!(
                 "Required: {}, provided: {}",
