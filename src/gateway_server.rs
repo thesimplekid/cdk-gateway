@@ -58,7 +58,7 @@ impl CdkGateway {
     /// # Returns
     /// A ServerHandle that can be used to stop the server
     pub async fn start_server(
-        self,
+        &self,
         bind_address: SocketAddr,
         mints: Vec<String>,
     ) -> anyhow::Result<()> {
@@ -77,7 +77,9 @@ impl CdkGateway {
             .await?)
     }
 
+    /// Stop the server and cancel all tasks
     pub async fn stop_server(&self) -> anyhow::Result<()> {
+        tracing::info!("Shutting down CDK Gateway server");
         self.server_cancel.cancel();
         Ok(())
     }
@@ -137,6 +139,7 @@ pub async fn create_cashu_lsp_router(
     gateway: Arc<CdkGateway>,
     mints: Vec<String>,
 ) -> anyhow::Result<Router> {
+    tracing::debug!("Creating CDK Gateway router with {} supported mints", mints.len());
     let gateway_state = GatwayState {
         inner: gateway,
         mints,
@@ -152,6 +155,7 @@ pub async fn create_cashu_lsp_router(
 pub async fn get_mints(
     State(state): State<GatwayState>,
 ) -> Result<Json<Vec<String>>, ErrorResponse> {
+    tracing::debug!("Request received for /mints endpoint");
     Ok(Json(state.mints))
 }
 
@@ -159,6 +163,7 @@ pub async fn post_melt_request(
     State(state): State<GatwayState>,
     Json(payload): Json<MeltRequest>,
 ) -> Result<Json<MeltResponse>, ErrorResponse> {
+    tracing::info!("Payment request received with method: {:?}", payload.method);
     let hash;
     let (amount_to_pay_sat, outgoing_options) = match payload.method {
         PaymentMethod::Bolt11 => {
@@ -293,11 +298,16 @@ pub async fn post_melt_request(
         .node()
         .make_payment(&CurrencyUnit::Sat, outgoing_options)
         .await
-        .map_err(|e| ErrorResponse {
-            code: 500,
-            message: "Payment failed".to_string(),
-            details: Some(e.to_string()),
+        .map_err(|e| {
+            tracing::error!("Payment failed: {}", e);
+            ErrorResponse {
+                code: 500,
+                message: "Payment failed".to_string(),
+                details: Some(e.to_string()),
+            }
         })?;
+
+    tracing::info!("Payment successfully processed");
 
     for token in payload.tokens.iter() {
         let wallet = state
@@ -342,6 +352,7 @@ pub async fn post_melt_request(
         .checked_sub(payment_response.total_spent)
         .unwrap_or_default();
 
+    tracing::info!("Preparing change payment of {}", change_amount);
     let mut change = vec![];
 
     for mint_url in used_mints {
@@ -362,6 +373,7 @@ pub async fn post_melt_request(
         change.push(token.to_string());
     }
 
+    tracing::info!("Payment request completed successfully with {} tokens in change", change.len());
     Ok(Json(MeltResponse {
         payment_proof: proof,
         change,

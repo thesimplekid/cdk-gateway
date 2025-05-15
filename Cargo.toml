@@ -29,3 +29,4 @@ home = "0.5.11"
 config = { version = "0.15.11", features = ["toml"] }
 bip39 = "2.1.0"
 tokio-util = "0.7.15"
+ctrlc = "3.4.4"

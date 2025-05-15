@@ -1,6 +1,7 @@
 use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tracing;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct GrpcProcessor {
@@ -73,19 +74,38 @@ impl Settings {
         // If work_dir is provided, look for config file there
         if let Some(dir) = work_dir {
             let config_path = std::path::Path::new(dir).join("config.toml");
+            tracing::debug!("Looking for config file at: {:?}", config_path);
+            if config_path.exists() {
+                tracing::info!("Found config file at: {:?}", config_path);
+            }
             s = s.add_source(File::from(config_path).required(false));
         } else {
             // Otherwise look in the current directory
+            tracing::debug!("Looking for config.toml in current directory");
             s = s.add_source(File::with_name("config").required(false));
         }
 
         // You can also specify a different config file path with an environment variable
         if let Ok(config_path) = std::env::var("CDK_GATEWAY_CONFIG") {
+            tracing::info!("Using config file specified by CDK_GATEWAY_CONFIG: {}", config_path);
             s = s.add_source(File::with_name(&config_path).required(true));
         }
 
         // Build and deserialize the config
-        s.build()?.try_deserialize()
+        tracing::debug!("Building configuration");
+        let result = s.build()?.try_deserialize::<Self>();
+        match &result {
+            Ok(settings) => {
+                tracing::info!("Configuration successfully loaded");
+                tracing::debug!("Server configured to listen on {}:{}", settings.server.listen_addr, settings.server.port);
+                tracing::debug!("Payment processor configured at {}:{}", settings.grpc_processor.addr, settings.grpc_processor.port);
+                tracing::debug!("Configured with {} mint URLs", settings.wallet.mint_urls.len());
+            }
+            Err(e) => {
+                tracing::error!("Failed to load configuration: {}", e);
+            }
+        }
+        result
     }
 }
 

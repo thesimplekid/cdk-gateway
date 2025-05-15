@@ -6,45 +6,29 @@ use cdk_gateway::config::Settings;
 use cdk_gateway::gateway_server::CdkGateway;
 use cdk_redb::WalletRedbDatabase;
 use std::sync::Arc;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 const DEFAULT_WORK_DIR: &str = ".cdk-gateway";
 
 fn main() -> anyhow::Result<()> {
+    // Initialize tracing
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            // Default to INFO level if RUST_LOG environment variable is not set
+            "cdk_gateway=info,tower_http=debug,axum::rejection=trace".into()
+        }))
+        .with(tracing_subscriber::fmt::layer().with_target(true))
+        .init();
+
+    tracing::info!("Starting CDK Gateway");
     // Get home directory
     let home_dir = home::home_dir().unwrap();
     let work_dir = home_dir.join(DEFAULT_WORK_DIR);
     
-    // Create work directory if it doesn't exist
-    if !work_dir.exists() {
-        std::fs::create_dir_all(&work_dir)?;
-    }
-    
-    // Create default config file if it doesn't exist
-    let config_path = work_dir.join("config.toml");
-    if !config_path.exists() {
-        println!("Creating default configuration at: {:?}", config_path);
-        std::fs::write(
-            &config_path,
-            r#"# CDK Gateway Configuration
-
-[grpc_processor]
-addr = "127.0.0.1"
-port = 50051
-
-[wallet]
-mnemonic_seed = ""
-mint_urls = ["https://mint.example.com"]
-
-[server]
-listen_addr = "127.0.0.1"
-port = 3000
-"#,
-        )?;
-    }
     
     // Load configuration from the work directory
     let settings = Settings::with_work_dir(Some(work_dir.to_str().unwrap()))?;
-    println!("Loaded configuration: {:?}", settings);
+    tracing::info!("Loaded configuration");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -53,7 +37,8 @@ port = 3000
     let runtime = Arc::new(runtime);
 
     // Pass settings to your application components here
-    let _: anyhow::Result<()> = runtime.block_on(async {
+    let gateway_result: anyhow::Result<CdkGateway> = runtime.block_on(async {
+        tracing::info!("Initializing application components");
         // Extract settings for each component
         let grpc_settings = settings.grpc_processor;
         let wallet_settings = settings.wallet;
@@ -67,30 +52,37 @@ port = 3000
         }
 
         // Initialize the payment processor
+        tracing::info!("Connecting to payment processor at {}:{}", grpc_settings.addr, grpc_settings.port);
         let payment_processor = cdk_payment_processor::PaymentProcessorClient::new(
             &grpc_settings.addr,
             grpc_settings.port,
             grpc_settings.tls_dir,
         )
         .await?;
+        tracing::info!("Payment processor connection established");
 
         // Make sure the work directory exists
         if !work_dir.exists() {
+            tracing::info!("Creating work directory at {:?}", work_dir);
             std::fs::create_dir_all(&work_dir)?;
         }
 
         // Parse the mnemonic
+        tracing::debug!("Initializing wallet from mnemonic seed");
         let mnemonic = bip39::Mnemonic::from_str(&wallet_settings.mnemonic_seed)?;
 
         // Set up the database in the work directory
         let redb_path = work_dir.join("cdk-gateway.redb");
+        tracing::info!("Opening database at {:?}", redb_path);
         let localstore = Arc::new(WalletRedbDatabase::new(&redb_path)?);
 
         let mut wallets = vec![];
 
         let seed = mnemonic.to_seed_normalized("");
+        tracing::info!("Initializing wallets for {} mint URLs", wallet_settings.mint_urls.len());
 
         for mint_url in wallet_settings.mint_urls.iter() {
+            tracing::info!("Setting up wallet for mint: {}", mint_url);
             let builder = WalletBuilder::new()
                 .mint_url(MintUrl::from_str(mint_url)?)
                 .unit(cdk::nuts::CurrencyUnit::Sat)
@@ -102,12 +94,15 @@ port = 3000
             let wallet_clone = wallet.clone();
 
             tokio::spawn(async move {
+                tracing::debug!("Fetching mint info for {}", wallet_clone.mint_url);
                 if let Err(err) = wallet_clone.get_mint_info().await {
                     tracing::error!(
                         "Could not get mint quote for {}, {}",
                         wallet_clone.mint_url,
                         err
                     );
+                } else {
+                    tracing::debug!("Successfully retrieved mint info for {}", wallet_clone.mint_url);
                 }
             });
 
@@ -115,6 +110,7 @@ port = 3000
         }
 
         let multi_mint_wallet = MultiMintWallet::new(localstore, Arc::new(seed), wallets);
+        tracing::info!("Multi-mint wallet initialized");
 
         // Start the gateway server with all components
         let gateway = CdkGateway::new(Arc::new(payment_processor), multi_mint_wallet);
@@ -125,11 +121,52 @@ port = 3000
             server_settings.port,
         );
 
-        // Start the server
-        gateway
-            .start_server(socket_addr, wallet_settings.mint_urls.clone())
-            .await
+        tracing::info!("Starting server on {}", socket_addr);
+
+        // Create a new gateway instance to return
+        let gateway_clone = gateway.clone();
+
+        // Start the server in a separate task
+        tokio::spawn(async move {
+            if let Err(e) = gateway.start_server(socket_addr, wallet_settings.mint_urls.clone()).await {
+                tracing::error!("Server error: {}", e);
+            }
+        });
+
+        Ok(gateway_clone)
     });
 
+    // Handle the result of gateway initialization
+    let gateway = match gateway_result {
+        Ok(gateway) => gateway,
+        Err(e) => {
+            tracing::error!("Failed to initialize gateway: {}", e);
+            return Err(e);
+        }
+    };
+
+    // Set up signal handling for graceful shutdown
+    let gateway_for_shutdown = gateway.clone();
+    let runtime_for_shutdown = runtime.clone();
+
+    ctrlc::set_handler(move || {
+        tracing::info!("Received shutdown signal, shutting down...");
+        let gateway = gateway_for_shutdown.clone();
+        let runtime = runtime_for_shutdown.clone();
+        
+        // Shutdown the gateway
+        runtime.block_on(async {
+            if let Err(e) = gateway.stop_server().await {
+                tracing::error!("Error during shutdown: {}", e);
+            }
+        });
+    })
+    .expect("Error setting Ctrl-C handler");
+
+    tracing::info!("CDK Gateway running. Press Ctrl+C to stop.");
+
+    // Keep the main thread alive
+    std::thread::park();
+    
     Ok(())
 }
