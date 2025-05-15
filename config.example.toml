@@ -1,0 +1,38 @@
+# CDK Gateway Configuration Example
+# Copy this file to 'config.toml' and modify as needed
+
+#-----------------------------------------------
+# GRPC Processor Configuration
+#-----------------------------------------------
+[grpc_processor]
+# Address of the GRPC processor
+addr = "127.0.0.1"
+
+# Port of the GRPC processor
+port = 50051
+
+# Optional: TLS certificates directory
+# tls_dir = "/path/to/tls/certs"
+
+#-----------------------------------------------
+# Wallet Configuration
+#-----------------------------------------------
+[wallet]
+# Optional: Your BIP39 mnemonic seed phrase
+# If not provided, a new one will be generated
+mnemonic_seed = "example word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
+
+# List of Cashu mint URLs to connect to
+mint_urls = ["https://mint.example.com"]
+
+#-----------------------------------------------
+# Server Configuration
+#-----------------------------------------------
+[server]
+# Address for the HTTP server to listen on
+# Use "127.0.0.1" for local access only
+# Use "0.0.0.0" to allow connections from any IP
+listen_addr = "127.0.0.1"
+
+# Port for the HTTP server to listen on
+port = 3000

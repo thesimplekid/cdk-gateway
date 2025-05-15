@@ -1,0 +1,80 @@
+use config::{Config, ConfigError, Environment, File};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct GrpcProcessor {
+    pub addr: String,
+    pub port: u16,
+    pub tls_dir: Option<PathBuf>,
+}
+
+impl Default for GrpcProcessor {
+    fn default() -> Self {
+        Self {
+            addr: "127.0.0.1".to_string(),
+            port: 50051,
+            tls_dir: None,
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
+pub struct WalletConfig {
+    pub mnemonic_seed: String,
+    pub mint_urls: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ServerConfig {
+    pub listen_addr: String,
+    pub port: u16,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            listen_addr: "127.0.0.1".to_string(),
+            port: 3000,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct Settings {
+    pub grpc_processor: GrpcProcessor,
+    pub wallet: WalletConfig,
+    pub server: ServerConfig,
+}
+
+impl Settings {
+    pub fn new() -> Result<Self, ConfigError> {
+        // Start with default settings
+        let mut s = Config::builder()
+            // Start with default values
+            .add_source(Config::try_from(&Self::default())?)
+            // Add in the current environment
+            // Prefix can be empty, or set to something like "CDK_GATEWAY"
+            .add_source(Environment::with_prefix("CDK_GATEWAY").separator("__"))
+            // Add in settings from the config file if it exists
+            .add_source(File::with_name("config").required(false));
+
+        // You can also specify a different config file path with an environment variable
+        if let Ok(config_path) = std::env::var("CDK_GATEWAY_CONFIG") {
+            s = s.add_source(File::with_name(&config_path).required(true));
+        }
+
+        // Build and deserialize the config
+        s.build()?.try_deserialize()
+    }
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            grpc_processor: GrpcProcessor::default(),
+            wallet: WalletConfig::default(),
+            server: ServerConfig::default(),
+        }
+    }
+}
